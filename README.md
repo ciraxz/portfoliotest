@@ -1,4 +1,4 @@
-Español
+Español:
 Este repositorio de inversión no constituye una recomendación de inversión. Se trata de un estudio científico y analítico del comportamiento de diversos activos financieros con características y cualidades completamente distintas.
 
 Su propósito es exclusivamente educativo y no pretende ir más allá. Cualquier uso de esta aplicación con fines lucrativos es responsabilidad y reconocimiento del usuario.
@@ -10,7 +10,7 @@ Dos estudiantes de la Universidad de Alcalá
 
 -----------------------------------------------------------------------
 
-English
+English:
 This investment repository is not an investment recommendation. It is a scientific and analytical study of the behavior of various financial assets with completely different characteristics and qualities.
 
 Its purpose is purely educational and does not intend to go beyond that. Any use of this app for profit is the user's responsibility and acknowledgment.
