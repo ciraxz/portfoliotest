@@ -139,108 +139,121 @@ def print_weights_return_sharpe(weights, tickers, sharpe_ratio, portfolio_return
     """
     Imprime las ponderaciones de los activos, el índice de Sharpe y el rendimiento de la cartera en formato vertical.
     """
-    result = "\n".join([f"{ticker}: {weight:.2%}" for ticker, weight in zip(tickers, weights)])
+    result = "\n".join([f"{ticker}: {weight:.4f}" for ticker, weight in zip(tickers, weights)])
     
     if portfolio_return is not None:
-        result += f"\n\nRendimiento esperado de la cartera: {portfolio_return:.2%}"
-        result += f"\nVolatilidad de la cartera: {portfolio_volatility:.2%}"
+        result += f"\n\nRendimiento esperado de la cartera: {portfolio_return:.4f}"
+        result += f"\nVolatilidad de la cartera: {portfolio_volatility:.4f}"
     else:
         result += "\nEl rendimiento esperado de la cartera no está disponible."
     
     result += f"\nÍndice de Sharpe: {sharpe_ratio:.4f}"
     if risk_free_rate is not None:
-        result += f"\nTasa libre de riesgo: {risk_free_rate:.2%}"
+        result += f"\nTasa libre de riesgo: {risk_free_rate:.4f}"
     else:
         result += "\nTasa libre de riesgo no disponible"
     
     return result
 
-def export_portfolio_to_excel(weights, tickers, sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate, filename='efficient_portfolio.xlsx'):
+def export_portfolio_to_excel(weights, tickers, sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate, filename='efficient_portfolio.xlsx', plot_filename=None):
     """
-    Exporta las ponderaciones de los activos, el índice de Sharpe y el rendimiento de la cartera a un archivo Excel.
+    Exporta las ponderaciones de la cartera eficiente, el índice de Sharpe, el rendimiento de la cartera y la tasa libre de riesgo a un archivo Excel.
     """
-    data = {
-        'Ticker': tickers,
-        'Ponderación': weights
+    data_dict = {'Ticker': tickers, 'Peso': weights}
+    data_df = pd.DataFrame(data_dict)
+    summary_dict = {
+        'Métrica': ['Índice de Sharpe', 'Rendimiento esperado de la cartera', 'Volatilidad', 'Tasa libre de riesgo'],
+        'Valor': [sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate]
     }
-    df = pd.DataFrame(data)
-    
-    summary_data = {
-        'Métrica': ['Rendimiento esperado', 'Volatilidad', 'Índice de Sharpe', 'Tasa libre de riesgo'],
-        'Valor': [portfolio_return, portfolio_volatility, sharpe_ratio, risk_free_rate]
-    }
-    summary_df = pd.DataFrame(summary_data)
+    summary_df = pd.DataFrame(summary_dict)
     
     with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='Ponderaciones', index=False)
+        data_df.to_excel(writer, sheet_name='Ponderaciones', index=False)
         summary_df.to_excel(writer, sheet_name='Resumen', index=False)
+        
+        # Guardar el gráfico como imagen en el archivo Excel
+        if plot_filename:
+            workbook = writer.book
+            worksheet = workbook['Resumen']
+            img = openpyxl.drawing.image.Image(plot_filename)
+            worksheet.add_image(img, 'E5')
+    
+    return f"Los resultados han sido exportados a '{filename}'"
+
+def obtener_tasa_fondos_efectiva():
+    """
+    Obtiene la tasa libre de riesgo más reciente para los bonos del Tesoro de EE.UU.
+    """
+    url = 'https://fred.stlouisfed.org/series/DFF'
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Lanza una excepción si hay un error en la solicitud HTTP
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Encontrar el elemento que contiene la tasa de interés
+        valor_element = soup.find('span', class_='series-meta-observation-value')
+        if valor_element:
+            tasa_porcentaje = float(valor_element.text.strip())  # Tasa en porcentaje (por ejemplo, 5.33)
+            tasa_decimal = tasa_porcentaje / 100.0  # Convertir a formato decimal (por ejemplo, 0.0533)
+            return tasa_decimal
+        else:
+            print('No se encontró el valor de la tasa de fondos federales efectiva en FRED.')
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f'Error al hacer la solicitud HTTP: {e}')
+        return None
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        try:
-            target_volatility = float(request.form['volatility']) / 100.0  # Convertir a decimal
-            risk_free_rate = get_risk_free_rate()
-            
-            # Descarga de datos
-            end_date = datetime.now()
-            start_date = end_date - pd.DateOffset(years=5)
-            data = download_data(tickers, start_date, end_date)
-            
-            # Cálculo de rendimientos
-            returns = calculate_returns(data)
-            
-            # Generar carteras aleatorias
-            num_portfolios = 10000  # Reducido para mejorar tiempo de ejecución
-            results, weights_record = generate_random_portfolios(returns, num_portfolios)
-            
-            # Encontrar la cartera eficiente para la volatilidad objetivo
-            efficient_portfolio, sharpe_ratio, portfolio_return, portfolio_volatility, found = find_efficient_portfolio_by_volatility(results, weights_record, target_volatility, risk_free_rate)
-            
-            if not found:
-                error_message = f"No se encontró ninguna cartera con una volatilidad objetivo de {target_volatility:.2%}. Por favor, intente con un valor diferente."
-                return render_template('index.html', error_message=error_message)
-            
-            # Graficar la frontera eficiente
-            min_volatility_idx = np.argmin(results[1])
-            max_sharpe_idx = np.argmax(results[2])
-            plot_filename = 'static/efficient_frontier.png'
-            plot_efficient_frontier(results, min_volatility_idx, max_sharpe_idx, efficient_portfolio, portfolio_volatility, returns, filename=plot_filename)
-            
-            # Mostrar los resultados en la página web
-            results_text = print_weights_return_sharpe(efficient_portfolio, tickers, sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate)
-            
-            # Exportar la cartera eficiente a Excel
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            excel_filename = f'static/efficient_portfolio_{timestamp}.xlsx'
-            export_portfolio_to_excel(efficient_portfolio, tickers, sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate, filename=excel_filename)
-            
-            return render_template('index.html', results=results_text, plot_image=plot_filename, excel_file=excel_filename)
+        target_volatility = float(request.form['volatility']) / 100
         
-        except Exception as e:
-            error_message = f"Se produjo un error: {e}"
+        # Descargar datos y calcular retornos
+        start_date = '2019-01-01'
+        end_date = datetime.today().strftime('%Y-%m-%d')  # Fecha fin actualizada
+        data = download_data(tickers, start_date, end_date)
+        returns = calculate_returns(data)
+        
+        # Generar carteras aleatorias
+        num_portfolios = 10000
+        results, weights_record = generate_random_portfolios(returns, num_portfolios)
+        
+        # Encontrar la cartera eficiente para la volatilidad objetivo
+        efficient_portfolio, sharpe_ratio, portfolio_return, portfolio_volatility, success = find_efficient_portfolio_by_volatility(results, weights_record, target_volatility, risk_free_rate=None)
+        
+        if success:
+            # Calcular la tasa libre de riesgo más reciente
+            risk_free_rate = obtener_tasa_fondos_efectiva()
+            
+            if risk_free_rate is not None:
+                # Preparar para gráfico y exportación a Excel
+                min_volatility_idx = np.argmin(results[1])
+                max_sharpe_idx = np.argmax(results[2])
+                plot_filename = 'static/images/efficient_frontier.png'
+                plot_efficient_frontier(results, min_volatility_idx, max_sharpe_idx, efficient_portfolio, portfolio_volatility, returns, filename=plot_filename)
+                
+                excel_filename = 'efficient_portfolio.xlsx'
+                export_message = export_portfolio_to_excel(efficient_portfolio, tickers, sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate, filename=excel_filename, plot_filename=plot_filename)
+                
+                # Mostrar resultados en la página
+                weights_output = print_weights_return_sharpe(efficient_portfolio, tickers, sharpe_ratio, portfolio_return, portfolio_volatility, risk_free_rate)
+                
+                return render_template('index.html', results=weights_output, plot_image=plot_filename, excel_file=excel_filename, export_message=export_message)
+            else:
+                error_message = "No se pudo obtener la tasa libre de riesgo. Inténtelo de nuevo más tarde."
+                return render_template('index.html', error_message=error_message)
+        else:
+            error_message = "No se encontró ninguna cartera con la volatilidad objetivo. Inténtelo de nuevo con otro valor."
             return render_template('index.html', error_message=error_message)
-    
-    return render_template('index.html')
+    else:
+        return render_template('index.html')
 
-@app.route('/download/<filename>')
+@app.route('/download/<path:filename>')
 def download_file(filename):
-    return send_from_directory('static', filename)
-
-def get_risk_free_rate():
-    """
-    Obtiene la tasa libre de riesgo desde la página web de FRED utilizando web scraping.
-    """
-    url = 'https://fred.stlouisfed.org/series/DFF'
-    try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        value = soup.find('span', class_='series-meta-observation-value').get_text()
-        risk_free_rate = float(value[:-1]) / 100.0  # Convertir a decimal
-        return risk_free_rate
-    except Exception as e:
-        print(f"Error al obtener la tasa libre de riesgo desde {url}: {e}")
-        return None
+    return send_from_directory('.', filename, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='127.0.0.1')
